@@ -1,9 +1,10 @@
 # Vanilla_chara_chat
 バニラシリーズ / Vanilla Series
 Single‑file vanilla HTML tools for AI‑powered vibecoding.
+---
 Lightweight, framework‑free parts designed for educational and creative coding workflows.
 それぞれが 1ファイルで完結する HTML です。ビルド不要・依存ゼロで、OpenAI 互換の LLM API にそのまま繋いで動きます。AI エージェントが読み・直し・生成しやすいよう、意図的にシンプルに作っています。
----
+
 🚀 How to Run (IMPORTANT)
 このプロジェクトの HTML は、ローカルサーバ経由での起動を前提にしています。
 ファイルをダブルクリックして開くと、接続設定の保存・読み込みなど一部の機能が 正しく動きません。
