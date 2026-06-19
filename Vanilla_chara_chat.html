@@ -1,0 +1,2593 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🍦バニラキャラチャット｜フリーパーツ素材</title>
+  <style>
+    /*
+      このHTMLは受け取ったPCで直接開いて使う単体ファイルです。
+      外部CSSや外部フォントを使わず、このファイルだけで画面が完結するようにしています。
+
+      要点（感情データがセリフに混ざらない設計）:
+      - モデルには「まずセリフだけを書き、最後に必ず [[EMO]]{...} の形で感情の増減量(JSON)を書く」と指示します。
+      - 画面側はストリーミング中、累積テキストから [[EMO]] を探し、それ以前だけを吹き出しに表示します。
+        マーカー以降は隠しバッファに入れて、完了後に感情JSONとして解析・適用します。
+      - 会話履歴に積むのは「マーカー前のセリフ」だけなので、次ターンに数値が混入しません。
+    */
+    * {
+      box-sizing: border-box;
+    }
+
+        :root {
+      --page: #f7f2e6;         /* ミルク感のある温かいバニラホワイト */
+      --page-deep: #efe7d4;    /* 周辺をわずかに沈ませる地色 */
+      --panel: #ffffff;        /* 純白 */
+      --panel-soft: #fcf9f1;   /* 柔らかいバニラホワイト */
+      --ink: #2b2520;          /* 上品なウォームブラック */
+      --ink-soft: #4d453c;     /* 本文よりやや明るい黒 */
+      --muted: #8a8076;        /* 上品なグレージュ */
+      --line: #e6decb;         /* 繊細なバニラグレー */
+      --line-soft: #f0eadb;    /* さらに淡い区切り線 */
+      --accent: #b8904f;       /* アンティークゴールド/コパーゴールド */
+      --accent-bright: #cda461;/* 明るいゴールド（グラデ上側） */
+      --accent-dark: #8f6c38;  /* ダークゴールド */
+      --accent-ink: #6e5325;   /* テキスト用の濃いゴールド */
+      --danger: #c2544a;       /* 落ち着いたコーラルレッド */
+      --danger-soft: #fdf2f0;
+      --warn: #a8842f;         /* ゴールドイエロー（可読性重視で濃いめ） */
+      --warn-soft: #fbf3df;
+      --ok: #5f7d20;           /* ピスタチオグリーン */
+      --ok-soft: #f2f5ea;
+      --assistant-bg: #fbf8f1; /* キャラ吹き出しの地色 */
+      --shadow: 0 1px 2px rgba(43, 37, 32, 0.04), 0 10px 30px rgba(43, 37, 32, 0.06);
+      --shadow-soft: 0 1px 2px rgba(43, 37, 32, 0.03), 0 6px 18px rgba(43, 37, 32, 0.04);
+      --radius: 12px;
+    }
+
+        body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 520px at 50% -10%, rgba(205, 164, 97, 0.10), transparent 60%),
+        linear-gradient(90deg, rgba(184, 144, 79, 0.045) 1px, transparent 1px),
+        linear-gradient(rgba(184, 144, 79, 0.035) 1px, transparent 1px),
+        linear-gradient(180deg, var(--page) 0%, var(--page-deep) 100%);
+      background-size: auto, 32px 32px, 32px 32px, auto;
+      background-attachment: fixed;
+      font-family: "Montserrat", "Noto Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.7;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding: 4px 2px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+    }
+
+    .brand-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent-ink);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .brand-kicker::before {
+      content: "";
+      width: 22px;
+      height: 2px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, var(--accent-bright), var(--accent));
+    }
+
+    h1 {
+      margin: 2px 0 0;
+      font-size: clamp(25px, 4vw, 40px);
+      line-height: 1.16;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+    }
+
+    h1 .accent {
+      background: linear-gradient(120deg, var(--accent-dark), var(--accent-bright));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .primary,
+    .secondary,
+    .danger-button {
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-weight: 700;
+      transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .primary {
+      border: 1px solid var(--accent-dark);
+      background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+      color: #fff;
+      box-shadow: 0 1px 1px rgba(255, 255, 255, 0.4) inset, 0 6px 16px rgba(143, 108, 56, 0.22);
+    }
+
+    .primary:hover {
+      background: linear-gradient(180deg, var(--accent), var(--accent-dark));
+      transform: translateY(-1px);
+      box-shadow: 0 1px 1px rgba(255, 255, 255, 0.4) inset, 0 10px 22px rgba(143, 108, 56, 0.28);
+    }
+
+    .primary:active {
+      transform: translateY(0);
+    }
+
+    .secondary {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .secondary:hover {
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      transform: translateY(-1px);
+    }
+
+    .danger-button {
+      border: 1px solid #e2b3ad;
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .danger-button:hover {
+      border-color: var(--danger);
+      transform: translateY(-1px);
+    }
+
+    .danger {
+      border: 2px solid var(--danger);
+      border-radius: 8px;
+      background: var(--danger-soft);
+      padding: 14px 16px;
+      margin: 18px 0;
+    }
+
+    .danger strong {
+      color: var(--danger);
+    }
+
+    .app-grid {
+      display: grid;
+      grid-template-columns: 1fr 330px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .workspace,
+    .side {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, #ffffff, var(--panel-soft));
+      box-shadow: var(--shadow);
+    }
+
+    .workspace {
+      padding: 18px;
+    }
+
+    .side {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-ink);
+    }
+
+    .chat-log {
+      height: 460px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(700px 200px at 50% 0%, rgba(205, 164, 97, 0.05), transparent 70%),
+        #fdfbf6;
+      padding: 16px;
+    }
+
+    .message {
+      max-width: 86%;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-shadow: var(--shadow-soft);
+      animation: bubble-in 0.22s ease;
+    }
+
+    @keyframes bubble-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.system {
+      max-width: 100%;
+      border: 1px dashed var(--line);
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 13.5px;
+      box-shadow: none;
+      border-radius: 10px;
+    }
+
+    .message.user {
+      margin-left: auto;
+      background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+      color: #fff;
+      border-bottom-right-radius: 5px;
+    }
+
+    .message.assistant {
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      background: var(--assistant-bg);
+      border-bottom-left-radius: 5px;
+    }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 12px;
+      align-items: end;
+    }
+
+    .send-controls {
+      display: grid;
+      gap: 8px;
+      align-content: end;
+    }
+
+    textarea,
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    textarea:focus,
+    input:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(184, 144, 79, 0.16);
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .counter {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .status-card,
+    .metric-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, #ffffff, var(--panel-soft));
+      padding: 13px;
+    }
+
+    .status-card {
+      display: grid;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .status-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+      opacity: 0.55;
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .badge {
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .badge.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .badge.ok {
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    /* === 感情パネル === */
+    .chara-name {
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .mood-line {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .emo-list {
+      display: grid;
+      gap: 9px;
+      margin-top: 4px;
+    }
+
+    .emo-row {
+      display: grid;
+      gap: 4px;
+    }
+
+    .emo-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+
+    .emo-head .emo-label {
+      font-weight: 700;
+    }
+
+    .emo-head .emo-value {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+
+    .emo-delta {
+      font-size: 11px;
+      font-weight: 800;
+      margin-left: 6px;
+    }
+
+    .emo-delta.up { color: var(--ok); }
+    .emo-delta.down { color: var(--danger); }
+
+    .emo-bar {
+      height: 9px;
+      border-radius: 999px;
+      background: #ece5d6;
+      overflow: hidden;
+      box-shadow: inset 0 1px 2px rgba(43, 37, 32, 0.08);
+    }
+
+    .emo-fill {
+      height: 100%;
+      border-radius: 999px;
+      width: 0;
+      transition: width 0.55s ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .metric-value {
+      display: block;
+      margin-top: 3px;
+      font-weight: 700;
+    }
+
+    .notice,
+    .error,
+    .success {
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+
+    .notice {
+      border: 1px solid #e8d39d;
+      background: var(--warn-soft);
+      color: #5c3c00;
+    }
+
+    .error {
+      border: 1px solid #f2b8b5;
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .success {
+      border: 1px solid #b8dec5;
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    .code-pre {
+      margin: 6px 0 0;
+      max-height: 200px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #1f2430;
+      color: #e8e8e8;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .gen-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .checkbox-row input {
+      width: auto;
+      margin-top: 4px;
+    }
+
+    .checkbox-row label {
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .divider {
+      border: 0;
+      border-top: 1px solid var(--line);
+      margin: 4px 0;
+    }
+
+    /* === タブ切り替えUI === */
+    .tabs-nav {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--line);
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      border: 1px solid transparent;
+      border-bottom: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 22px;
+      border-radius: 10px 10px 0 0;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      margin-bottom: -2px;
+      position: relative;
+    }
+
+    .tab-btn:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(180deg, #ffffff, var(--panel-soft));
+      color: var(--accent-ink);
+      border-color: var(--line);
+      border-bottom: 2px solid #fff;
+      padding-bottom: 10px;
+      z-index: 1;
+      box-shadow: 0 -3px 0 0 var(--accent) inset;
+    }
+
+    #tabContentCharacter,
+    #tabContentMemory,
+    #tabContentSettings,
+    #tabContentGlossary {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding-bottom: 40px;
+    }
+
+    .memory-preview {
+      max-height: 150px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fcfbf8;
+      padding: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .settings-panel,
+    .glossary-panel {
+      max-width: 860px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, #ffffff, var(--panel-soft));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 19px;
+      letter-spacing: 0;
+    }
+
+    .panel-body {
+      padding: 22px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel-foot {
+      padding: 14px 22px;
+      border-top: 1px solid var(--line);
+      background: var(--panel-soft);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .form-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .help {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* 初期感情スライダー */
+    .emo-init-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 18px;
+    }
+
+    .emo-init-row {
+      display: grid;
+      gap: 4px;
+    }
+
+    .emo-init-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      padding: 0;
+      accent-color: var(--accent);
+    }
+
+    /* === [?] ヘルプボタン === */
+    .help-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      border: 1.5px solid var(--muted);
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      cursor: pointer;
+      padding: 0;
+      vertical-align: middle;
+      margin-left: 4px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+
+    .help-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #f7efdc;
+    }
+
+    .tooltip-bubble {
+      position: fixed;
+      z-index: 300;
+      background: #1f2430;
+      color: #e8e8e8;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.6;
+      max-width: 270px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+      pointer-events: auto;
+    }
+
+    .tooltip-bubble a {
+      color: #e3bd76;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .setup-balloon {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      background: var(--accent);
+      color: #fff;
+      padding: 14px 38px 14px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+      animation: balloon-in 0.4s ease;
+      max-width: 230px;
+    }
+
+    .balloon-close {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      font-weight: 400;
+    }
+
+    .balloon-close:hover {
+      color: #fff;
+    }
+
+    @keyframes balloon-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 880px) {
+      .topbar,
+      .app-grid,
+      .emo-init-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .input-row {
+        grid-template-columns: 1fr;
+      }
+
+      .input-row .primary,
+      .input-row .danger-button {
+        width: 100%;
+      }
+
+      .panel-body,
+      .panel-head,
+      .panel-foot {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+    }
+  
+    /* === 紹介 & 注意ボックス === */
+    .promo-box {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin-top: 4px;
+      padding: 14px 16px;
+      background:
+        radial-gradient(420px 120px at 0% 0%, rgba(205, 164, 97, 0.12), transparent 70%),
+        var(--panel-soft);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .promo-tag {
+      flex-shrink: 0;
+      margin-top: 1px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .promo-text strong { color: var(--accent-ink); }
+    .promo-box a {
+      display: inline-block;
+      margin-top: 6px;
+      color: var(--accent-dark);
+      text-decoration: none;
+      font-weight: 700;
+      border-bottom: 1px solid rgba(143, 108, 56, 0.4);
+    }
+    .promo-box a:hover { border-bottom-color: var(--accent-dark); }
+    .warning-box {
+      margin-top: 4px;
+      padding: 13px 16px;
+      background: var(--warn-soft);
+      border: 1px solid #e7d39a;
+      border-left: 3px solid var(--warn);
+      border-radius: 10px;
+      color: #6a531c;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .warning-box strong { color: #6a531c; }
+
+    /* === 用語集スタイル === */
+    .glossary-body {
+      display: grid;
+      gap: 18px;
+    }
+
+    .glossary-item {
+      border-left: 3px solid var(--accent);
+      padding-left: 16px;
+      padding-top: 2px;
+      padding-bottom: 2px;
+    }
+
+    .glossary-item h3 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--accent-ink);
+    }
+
+    .glossary-item p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--ink-soft);
+      line-height: 1.6;
+    }
+
+    .glossary-item code {
+      background: var(--panel-soft);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: "Courier New", monospace;
+      font-size: 13px;
+      color: var(--accent-ink);
+    }
+
+    .glossary-link {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--accent);
+      cursor: pointer;
+    }
+
+    .glossary-link:hover {
+      color: var(--accent-dark);
+      border-bottom: 1px solid var(--accent-dark);
+    }
+
+    .glossary-item.glossary-highlight {
+      animation: glossary-flash 1.6s ease;
+    }
+
+    @keyframes glossary-flash {
+      0%   { background: rgba(205, 164, 97, 0.28); border-radius: 8px; }
+      100% { background: transparent; }
+    }
+
+  </style>
+</head>
+<body>
+  <noscript>
+    <div style="margin:16px;padding:16px;border:2px solid #b42318;background:#fff0ed;color:#b42318;font-family:sans-serif;">
+      このチャットはブラウザのJavaScript機能を使ってAPI通信と署名計算を行います。
+      ブラウザ設定でJavaScriptを有効にしてから、もう一度このファイルを開いてください。
+    </div>
+  </noscript>
+
+  <main class="shell">
+    <div class="topbar">
+      <div class="brand">
+        <span class="brand-kicker">Free Parts ・ キャラクターチャット</span>
+        <h1>🍦バニラ<span class="accent">キャラチャット</span></h1>
+        <p class="subtitle">性格を設定したキャラクターと会話し、感情パラメータが会話に応じて増減する素材です。感情データはセリフに混ざらないよう分離して扱います。OpenAI互換のAPIならそのまま差し替えて使えます。</p>
+      </div>
+    </div>
+
+    <div class="tabs-nav">
+      <button class="tab-btn active" id="tabBtnChat" type="button">チャット</button>
+      <button class="tab-btn" id="tabBtnCharacter" type="button">キャラクター設定</button>
+      <button class="tab-btn" id="tabBtnMemory" type="button">メモリ設定</button>
+      <button class="tab-btn" id="tabBtnSettings" type="button">接続設定</button>
+      <button class="tab-btn" id="tabBtnGlossary" type="button">用語集</button>
+    </div>
+
+    <section class="danger" aria-label="サーバー公開禁止">
+      <strong>重要: このHTMLはローカルPC専用です。</strong>
+      絶対にサーバーへアップロードして公開しないでください。API接続情報と会話・感情の状態は、このPCのブラウザ内に保存されます。
+    </section>
+
+    <div id="fileOpenNotice" class="notice hidden file-open-notice" aria-label="直接開いた場合の案内" style="margin-bottom:18px;">
+      ⚠️ <strong>このページをファイルから直接開いています。</strong>
+      この開き方では、接続設定をして保存しても次に開いたときに読み込まれません。<br>
+      フォルダ内の <code style="color: var(--danger); font-weight: bold;">start-local-server.bat</code> をダブルクリックして開き直してください。
+    </div>
+
+    <div id="tabContentChat" class="tab-content">
+      <div class="app-grid">
+        <section class="workspace" aria-label="チャット画面">
+          <h2 class="section-title">チャット</h2>
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <div id="chatError" class="error hidden"></div>
+          <form id="chatForm" class="input-row">
+            <div>
+              <textarea id="chatInput" rows="2" placeholder="キャラクターに話しかけてみましょう。"></textarea>
+              <span id="chatCount" class="counter">0 文字</span>
+            </div>
+            <div class="send-controls">
+              <button id="chatSend" class="primary" type="submit">送信</button>
+              <button id="chatStop" class="danger-button hidden" type="button">停止</button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="side" aria-label="感情と状態">
+          <div class="status-card">
+            <div class="status-line">
+              <span id="charaName" class="chara-name">キャラクター</span>
+              <span id="moodBadge" class="badge ok">気分</span>
+            </div>
+            <div id="moodLine" class="mood-line">会話を始めると感情が動きます。</div>
+            <div id="emoList" class="emo-list"></div>
+            <button id="resetConversation" class="danger-button" type="button">会話と感情をリセット</button>
+          </div>
+
+          <div class="status-card">
+            <div class="status-line">
+              <strong>接続状態</strong>
+              <span id="settingsStatus" class="badge warn">未設定</span>
+            </div>
+            <div id="settingsSummary" class="notice">接続設定からAPIサーバーURLとキーを入力してください。</div>
+            <button id="testConnection" class="secondary" type="button">接続テスト</button>
+            <div id="testResult" class="notice hidden"></div>
+          </div>
+
+          <div class="status-card">
+            <div class="status-line">
+              <strong>記憶 <button class="help-btn" id="hbMemory" type="button" aria-label="記憶についてのヘルプ">?</button></strong>
+              <span id="memoryBadge" class="badge ok">なし</span>
+            </div>
+            <div id="memorySummaryLine" class="success">直近保持: 0往復 / 長期記憶: なし</div>
+            <div id="compactStatus" class="notice hidden"></div>
+            <div id="memoryPreview" class="memory-preview">まだ記憶はまとめられていません。</div>
+          </div>
+
+          <div class="status-card">
+            <strong>生成スペック</strong>
+            <div class="metrics">
+              <div class="metric-card">
+                <span class="metric-label">入力 <button class="help-btn" id="hbInput" type="button" aria-label="入力についてのヘルプ">?</button></span>
+                <span id="metricInput" class="metric-value">0 文字</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">出力(セリフ) <button class="help-btn" id="hbOutput" type="button" aria-label="出力についてのヘルプ">?</button></span>
+                <span id="metricOutput" class="metric-value">0 文字</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">初回まで(TTFT) <button class="help-btn" id="hbTtft" type="button" aria-label="TTFTについてのヘルプ">?</button></span>
+                <span id="metricTtft" class="metric-value">— 秒</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">時間 <button class="help-btn" id="hbTime" type="button" aria-label="時間についてのヘルプ">?</button></span>
+                <span id="metricTime" class="metric-value">0.00 秒</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">速度 <button class="help-btn" id="hbSpeed" type="button" aria-label="速度についてのヘルプ">?</button></span>
+                <span id="metricSpeed" class="metric-value">0.0 文字/秒</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">トークン <button class="help-btn" id="hbTokens" type="button" aria-label="トークンについてのヘルプ">?</button></span>
+                <span id="metricTokens" class="metric-value">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="devPanel" class="status-card hidden">
+            <strong>開発パネル</strong>
+            <div>
+              <span class="metric-label">最後の生応答（マーカー込み）</span>
+              <pre id="debugResponse" class="code-pre">まだ応答はありません。</pre>
+            </div>
+            <div>
+              <span class="metric-label">最後のリクエスト</span>
+              <pre id="debugRequest" class="code-pre">まだリクエストはありません。</pre>
+            </div>
+            <button id="exportData" class="secondary" type="button">会話と感情をJSONで保存</button>
+            <p class="help" style="margin-top:6px;">会話履歴と感情の状態をファイルに書き出します（<a href="#glossary-json-export" class="glossary-link">JSON保存機能</a>）。</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- キャラクター設定タブ -->
+    <div id="tabContentCharacter" class="tab-content hidden">
+      <div class="settings-panel">
+        <div class="panel-head">
+          <h2>キャラクター設定</h2>
+        </div>
+        <div class="panel-body">
+          <div class="notice">
+            性格や口調を自由に設定できます。設定は次の発言から反映されます。初期感情値は「会話と感情をリセット」または「感情を初期値に戻す」を押したときに適用されます。
+          </div>
+          <div id="characterMsg" class="error hidden"></div>
+
+          <div>
+            <label class="form-label" for="charName">名前</label>
+            <input id="charName" type="text" placeholder="例: ミナ">
+          </div>
+          <div class="gen-grid">
+            <div>
+              <label class="form-label" for="charFirstPerson">一人称（任意）</label>
+              <input id="charFirstPerson" type="text" placeholder="例: わたし / 僕 / 俺">
+            </div>
+            <div>
+              <label class="form-label" for="charSpeech">口調（任意）</label>
+              <input id="charSpeech" type="text" placeholder="例: 明るいタメ口、語尾に「〜だよ」">
+            </div>
+          </div>
+          <div>
+            <label class="form-label" for="charPersona">性格・設定</label>
+            <textarea id="charPersona" rows="6" placeholder="例: 明るく好奇心旺盛な看板娘。世話焼きで相手をからかうのが好きだが根は優しい。困っている人は放っておけない。"></textarea>
+            <p class="help">背景・口ぐせ・好き嫌い・してはいけないことなどを書くほど、キャラが安定します。</p>
+          </div>
+
+          <hr class="divider">
+
+          <strong>初期感情値（0〜100） <button class="help-btn" id="hbInitEmo" type="button" aria-label="初期感情についてのヘルプ">?</button></strong>
+          <div id="emoInitGrid" class="emo-init-grid"></div>
+          <p class="help" style="margin-top:10px;">感情は会話に応じて自動で増減します。仕組みは<a href="#glossary-emotion" class="glossary-link">感情パラメータと [[EMO]] マーカー</a>を参照してください。</p>
+        </div>
+        <div class="panel-foot">
+          <button id="resetEmotions" class="secondary" type="button">感情を初期値に戻す</button>
+          <button id="saveCharacter" class="primary" type="button">キャラクターを保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- メモリ設定タブ -->
+    <div id="tabContentMemory" class="tab-content hidden">
+      <div class="settings-panel">
+        <div class="panel-head">
+          <h2>メモリ設定</h2>
+        </div>
+        <div class="panel-body">
+          <div class="notice">
+            直近のやり取りはそのまま送り、古くなった会話はキャラクターの「記憶メモ」へ<a href="#glossary-auto-compact" class="glossary-link">自動で圧縮</a>します。これにより、長い会話でも名前・呼び方・約束などを覚えていられます。整理は返答後に行うため、通常の返答開始は遅くなりにくい設計です。チャット画面のログは消えず、送信する文脈だけを「記憶＋直近」に絞ります。
+          </div>
+          <div id="memoryDialogMsg" class="error hidden"></div>
+          <div>
+            <label class="form-label" for="recentTurns">そのまま保持する直近のやり取り</label>
+            <select id="recentTurns">
+              <option value="4">4往復</option>
+              <option value="6">6往復</option>
+              <option value="8">8往復</option>
+              <option value="10">10往復</option>
+            </select>
+            <p class="help">おすすめは6往復です。多いほど直前の流れを保ちますが、送信量が増えます。</p>
+          </div>
+          <div>
+            <label class="form-label" for="compactOverTurns">記憶への自動整理を始める量</label>
+            <select id="compactOverTurns">
+              <option value="8">8往復を超えたら</option>
+              <option value="10">10往復を超えたら</option>
+              <option value="12">12往復を超えたら</option>
+              <option value="16">16往復を超えたら</option>
+            </select>
+            <p class="help">この往復数を超えたら、古い会話を記憶メモへ圧縮します。直近保持より大きい値にしてください。</p>
+          </div>
+        </div>
+        <div class="panel-foot">
+          <button id="saveMemorySettings" class="primary" type="button">メモリ設定を保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 接続設定タブ -->
+      <!-- 接続設定タブコンテンツ -->
+  <div id="tabContentSettings" class="tab-content hidden">
+    <div class="settings-panel">
+      <div class="panel-head">
+        <h2>接続設定</h2>
+      </div>
+      <div class="panel-body">
+        <div class="notice hidden file-open-notice" aria-label="直接開いた場合の案内">
+          ⚠️ <strong>このページをファイルから直接開いています。</strong>
+          この開き方では、接続設定をして保存しても次に開いたときに読み込まれません。<br>
+          フォルダ内の <code style="color: var(--danger); font-weight: bold;">start-local-server.bat</code> をダブルクリックして開き直してください。
+        </div>
+        <div class="notice">
+          入力した接続情報は、このPCのブラウザ内にだけ保存されます。共有PCでは利用後に設定を削除してください。
+        </div>
+        <div id="settingsMsg" class="error hidden"></div>
+
+        <div>
+          <label class="form-label" for="apiProvider">接続先サービス</label>
+          <select id="apiProvider">
+            <option value="otemoto">おてもとLLM（ブラウザからそのまま接続）</option>
+            <option value="openai">OpenAI（APIキー）</option>
+            <option value="gemini">Gemini（APIキー）</option>
+            <option value="custom">カスタム / ローカル（OpenAI互換）</option>
+          </select>
+        </div>
+
+        <!-- おてもとLLMの紹介（おてもとLLM選択時に表示・ソフトな案内） -->
+        <div id="otemotoPromo" class="promo-box">
+          <span class="promo-tag">なにこれ？</span>
+          <div class="promo-text">
+            <strong>「おてもとLLM」</strong>は、ブラウザからそのまま繋げる定額タイプのLLMサービスです。<a href="https://otemotollm.com" target="_blank" rel="noopener">詳細 →</a>
+          </div>
+        </div>
+
+        <!-- 外部API（ブラウザ直結）に関する注意：CORS + 従量課金 -->
+        <div id="apiWarning" class="warning-box hidden">
+          <strong>⚠️ ブラウザから直接は繋がらないことがあります（CORS）。</strong>
+          OpenAI・Geminiの公式APIは、ブラウザから直接呼び出すと多くの場合ブラウザ側の制約（CORS）でブロックされます。利用するには中継サーバー（プロキシ）を別途立てるか、CORSを許可したローカル/カスタムのエンドポイントを「カスタム」で指定してください。<br>
+          また、これらのAPIは利用量に応じて<strong>従量課金</strong>されることがあります。料金体系をご確認の上、ご自身の判断でご利用ください。
+        </div>
+
+        <!-- おてもとLLM用フィールド -->
+        <div id="fieldsOtemoto" class="fields-group">
+          <div style="margin-bottom: 12px;">
+            <label class="form-label" for="apiUrl">
+              APIサーバーURL
+              <button class="help-btn" id="hbApiUrl" type="button" aria-label="APIサーバーURLについてのヘルプ">?</button>
+            </label>
+            <input id="apiUrl" type="text" placeholder="例: https://otemotollm.com">
+            <p class="help"><a href="#glossary-api-url" class="glossary-link">APIサーバーURL</a>を入力します。末尾に /v1/chat/completions が無い場合は自動で補完します。</p>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <label class="form-label" for="clientKey">
+              Client Key (client_key)
+              <button class="help-btn" id="hbClientKey" type="button" aria-label="Client Keyについてのヘルプ">?</button>
+            </label>
+            <input id="clientKey" type="password" placeholder="pub_...">
+            <p class="help">公開鍵または<a href="#glossary-api-key" class="glossary-link">APIキー</a>（パブリック）。認証に使用します。</p>
+          </div>
+          <div>
+            <label class="form-label" for="serverSecret">
+              Server Secret (server_secret)
+              <button class="help-btn" id="hbServerSecret" type="button" aria-label="Server Secretについてのヘルプ">?</button>
+            </label>
+            <input id="serverSecret" type="password" placeholder="sec_...">
+            <p class="help">秘密鍵またはシークレット。リクエストの署名に使用され、サーバー側で検証されます。詳細は<a href="#glossary-hmac" class="glossary-link">サーバー側の仕様</a>を確認してください。</p>
+          </div>
+        </div>
+
+        <!-- OpenAI / Gemini 用フィールド -->
+        <div id="fieldsApiKey" class="fields-group hidden">
+          <div>
+            <label class="form-label" for="apiKey">API Key (APIキー)</label>
+            <input id="apiKey" type="password" placeholder="sk-...">
+          </div>
+        </div>
+
+        <!-- カスタム用フィールド -->
+        <div id="fieldsCustom" class="fields-group hidden">
+          <div style="margin-bottom: 12px;">
+            <label class="form-label" for="customApiUrl">カスタム APIサーバーURL</label>
+            <input id="customApiUrl" type="text" placeholder="例: http://localhost:11434">
+            <p class="help">ローカルサーバー（Ollama, LM Studio等）またはOpenAI互換のエンドポイントを指定します。</p>
+          </div>
+          <div>
+            <label class="form-label" for="customApiKey">API Key / Token (任意)</label>
+            <input id="customApiKey" type="password" placeholder="空欄可">
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <strong>生成パラメータ</strong>
+        <p class="help">空欄の項目は送信せず、各サービスまたはサーバー側の既定値を使います。</p>
+        <div>
+          <label class="form-label" for="genModel">
+            model (モデル名)
+            <button class="help-btn" id="hbModel" type="button" aria-label="modelについてのヘルプ">?</button>
+          </label>
+          <input id="genModel" type="text" placeholder="例: gpt-4o-mini / gemini-2.5-flash / 空欄可">
+        </div>
+        <div class="gen-grid">
+          <div>
+            <label class="form-label" for="genTemperature">
+              temperature
+              <button class="help-btn" id="hbTemperature" type="button" aria-label="temperatureについてのヘルプ">?</button>
+            </label>
+            <input id="genTemperature" type="number" step="0.1" min="0" max="2" placeholder="例: 0.7">
+          </div>
+          <div>
+            <label class="form-label" for="genMaxTokens">
+              max_tokens
+              <button class="help-btn" id="hbMaxTokens" type="button" aria-label="max_tokensについてのヘルプ">?</button>
+            </label>
+            <input id="genMaxTokens" type="number" step="1" min="1" placeholder="例: 1024">
+          </div>
+        </div>
+        <div class="checkbox-row">
+          <input id="genIncludeUsage" type="checkbox" checked>
+          <label for="genIncludeUsage">ストリーミング時に <a href="#glossary-usage" class="glossary-link">usage</a> を取得する（<a href="#glossary-stream-usage" class="glossary-link">stream_options.include_usage</a>）。トークン数表示に使います。</label>
+        </div>
+
+        <hr class="divider">
+
+        <div class="checkbox-row">
+          <input id="devMode" type="checkbox">
+          <label for="devMode"><strong>開発者モード</strong>（サイドバーに生リクエスト/レスポンスなどのテスト機能を表示）</label>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button id="clearSettings" class="danger-button" type="button">設定を削除</button>
+        <button id="saveSettings" class="primary" type="button">設定を保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用語集タブコンテンツ -->
+  <div id="tabContentGlossary" class="tab-content hidden">
+    <div class="glossary-panel">
+      <div class="panel-head">
+        <h2>用語集</h2>
+      </div>
+      <div class="panel-body glossary-body">
+        <div class="glossary-item">
+          <h3 id="glossary-api-url">APIサーバーURL</h3>
+          <p>このチャットがリクエストを送信するサーバーのアドレスです。例：<code>https://api.example.com/v1/chat/completions</code>。通常は OpenAI 互換の形式で、<code>/v1/chat/completions</code> をエンドポイントとして使います。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-api-key">API キー</h3>
+          <p>サーバーに対して「あなたは誰か」を証明するための認証情報です。秘密鍵（シークレット）として扱い、他人に共有してはいけません。テキスト形式で保存され、リクエストヘッダとして送信されます。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-hmac">署名認証（HMAC）</h3>
+          <p>APIキーとリクエストの内容から計算されるハッシュ値で、「このリクエストが改ざんされていない」ことを証明します。サーバー側で署名を検証して、正当なリクエストのみを受け入れます。おてもとLLM では <code>HMAC-SHA256( X-Timestamp(秒) + リクエストボディ )</code> を hex で送信します。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-emotion">感情パラメータと [[EMO]] マーカー</h3>
+          <p>キャラクターの気分を 0〜100 の数値で表したものです。AIには「まずセリフを書き、最後に必ず <code>[[EMO]]{...}</code> の形で感情の増減量を書く」よう指示し、画面側ではマーカー以降を吹き出しから取り除いて感情の更新にだけ使います。これにより、数値が会話に混ざらず、次のターンの履歴にも残りません。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-usage">usage（使用量）</h3>
+          <p>APIの回答に含まれる、このリクエストで消費したトークン数の情報です。<code>prompt_tokens</code>（入力）と <code>completion_tokens</code>（出力）に分かれており、従量課金型のAPIでは課金根拠となります。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-stream-usage">stream_options.include_usage</h3>
+          <p>ストリーム形式（リアルタイム逐次表示）でAPIから回答を受け取る際に、同時に使用量（usage）情報も含めるオプション。対応していないサーバーでは無視される場合があります。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-auto-compact">自動要約（メモリ圧縮）</h3>
+          <p>会話が増えすぎたとき、古い会話を短い文章（記憶メモ）に圧縮して、新しい会話とセットで送信する仕組みです。これにより、長い会話でもAPIの送信量を抑えながら、名前・呼び方・約束などの文脈を保つことができます。</p>
+        </div>
+
+        <div class="glossary-item">
+          <h3 id="glossary-json-export">JSON 保存機能</h3>
+          <p>このチャットの会話履歴と感情の状態を JSON 形式で保存・復元するツール。ブラウザのローカルストレージだけでなく、ファイルとして他のPCやツールで読み込むことができます。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  </main>
+
+  <div id="tooltipBubble" class="tooltip-bubble hidden" role="tooltip"></div>
+
+  <div id="setupBalloon" class="setup-balloon hidden" role="status">
+    <button class="balloon-close" id="closeBalloon" type="button" title="閉じる">✕</button>
+    ⚙️ まずは<strong>「接続設定」</strong>を押してAPIキーを入力してください
+  </div>
+
+  <script>
+    var SETTINGS_KEY = "otemoto_llm_chara_settings_v1";
+    var GEN_KEY = "otemoto_llm_chara_gen_v1";
+    var CHAR_KEY = "otemoto_llm_chara_character_v1";
+    var EMO_KEY = "otemoto_llm_chara_emotions_v1";
+    var CHAT_KEY = "otemoto_llm_chara_chat_v1";
+    var MEM_KEY = "otemoto_llm_chara_memory_v1";
+    var MEMCFG_KEY = "otemoto_llm_chara_memconfig_v1";
+    var UI_KEY = "otemoto_llm_chara_ui_v1";
+
+    var DEFAULT_MODEL_ID = "LFM2.5_Q4KM";
+    var DEFAULT_API_URL = "https://otemotollm.com";
+    var MARKER = "[[EMO]]";       // セリフと感情JSONを分ける区切り
+
+    var DEFAULT_MEMORY_CONFIG = {
+      recentTurns: 6,         // そのまま送る直近の往復数
+      compactOverTurns: 10    // これを超えたら古い会話を記憶へ圧縮
+    };
+
+    // 感情の定義。key はJSONのキー、label は表示名、color はバーの色。
+    var EMOTIONS = [
+      { key: "joy",       label: "喜び",   color: "#0f766e" },
+      { key: "anger",     label: "怒り",   color: "#b42318" },
+      { key: "sadness",   label: "悲しみ", color: "#2563eb" },
+      { key: "fun",       label: "楽しさ", color: "#d97706" },
+      { key: "surprise",  label: "驚き",   color: "#7c3aed" },
+      { key: "affection", label: "好意",   color: "#db2777" }
+    ];
+
+    var DEFAULT_CHARACTER = {
+      name: "ミナ",
+      firstPerson: "わたし",
+      speechStyle: "明るく親しみやすいタメ口寄り。語尾に軽い感情が出る。",
+      persona: "看板娘として店先に立つ、好奇心旺盛で世話焼きな女の子。相手をからかうのが好きだが根は優しく、困っている人を放っておけない。",
+      initialEmotions: { joy: 60, anger: 8, sadness: 10, fun: 55, surprise: 20, affection: 35 }
+    };
+
+    var DEFAULT_GEN = {
+      model: DEFAULT_MODEL_ID,
+      temperature: "0.8",
+      maxTokens: "",
+      includeUsage: true
+    };
+
+    var DEFAULT_UI = { devMode: false };
+
+    var state = {
+      isBusy: false,
+      abortController: null,
+      settings: loadJson(SETTINGS_KEY, { provider: "otemoto", apiUrl: DEFAULT_API_URL, clientKey: "", serverSecret: "", apiKey: "", customApiUrl: "", customApiKey: "" }),
+      gen: loadJson(GEN_KEY, DEFAULT_GEN),
+      character: loadJson(CHAR_KEY, DEFAULT_CHARACTER),
+      emotions: loadJson(EMO_KEY, null),
+      chat: loadJson(CHAT_KEY, []),
+      memory: loadJson(MEM_KEY, { summary: "", summarizedCount: 0 }),
+      memoryConfig: loadJson(MEMCFG_KEY, DEFAULT_MEMORY_CONFIG),
+      isCompacting: false,
+      lastDeltas: {},
+      ui: loadJson(UI_KEY, DEFAULT_UI),
+      debug: { request: null, response: null, usage: null }
+    };
+    if (!state.settings.apiUrl) {
+      state.settings.apiUrl = DEFAULT_API_URL;
+    }
+
+    function $(id) { return document.getElementById(id); }
+
+    function init() {
+      // file:// で直接開いている場合は、接続設定が保存されない可能性を案内します
+      if (window.location.protocol === "file:") {
+        document.querySelectorAll(".file-open-notice").forEach(function (el) {
+          el.classList.remove("hidden");
+        });
+      }
+
+      if (typeof state.gen.includeUsage === "undefined") { state.gen.includeUsage = true; }
+      if (!state.gen.model) { state.gen.model = DEFAULT_MODEL_ID; }
+      // キャラクター設定の欠損補完
+      if (!state.character || typeof state.character !== "object") { state.character = clone(DEFAULT_CHARACTER); }
+      if (!state.character.initialEmotions) { state.character.initialEmotions = clone(DEFAULT_CHARACTER.initialEmotions); }
+      // 現在感情が無ければ初期値から作る
+      if (!state.emotions || typeof state.emotions !== "object") {
+        state.emotions = clone(state.character.initialEmotions);
+      }
+      EMOTIONS.forEach(function (e) {
+        if (typeof state.emotions[e.key] !== "number") { state.emotions[e.key] = state.character.initialEmotions[e.key] || 0; }
+      });
+      // メモリ関連の欠損補完
+      if (!state.memory || typeof state.memory !== "object") { state.memory = { summary: "", summarizedCount: 0 }; }
+      if (typeof state.memory.summarizedCount !== "number") { state.memory.summarizedCount = 0; }
+      if (!state.memoryConfig) { state.memoryConfig = clone(DEFAULT_MEMORY_CONFIG); }
+
+      bindEvents();
+      applyDevMode();
+      buildEmoInitSliders();
+      applyCharacterToForm();
+      loadSettingsToForm();
+      loadMemoryToForm();
+      renderCharaName();
+      renderEmotions();
+      renderChat();
+      renderMemoryStatus();
+      renderSettingsStatus();
+      updateCounters();
+      resetMetrics();
+    }
+
+    
+    function toggleProviderFields(provider) {
+      $("fieldsOtemoto").classList.toggle("hidden", provider !== "otemoto");
+      $("fieldsApiKey").classList.toggle("hidden", provider !== "openai" && provider !== "gemini");
+      $("fieldsCustom").classList.toggle("hidden", provider !== "custom");
+      
+      $("otemotoPromo").classList.toggle("hidden", provider !== "otemoto");
+      $("apiWarning").classList.toggle("hidden", provider === "otemoto");
+    }
+
+    function bindEvents() {
+      $("tabBtnChat").addEventListener("click", function () { switchTab("Chat"); });
+      $("tabBtnCharacter").addEventListener("click", function () { switchTab("Character"); });
+      $("tabBtnMemory").addEventListener("click", function () { switchTab("Memory"); });
+      $("tabBtnSettings").addEventListener("click", function () { switchTab("Settings"); });
+      $("tabBtnGlossary").addEventListener("click", function () { switchTab("Glossary"); });
+
+      // 用語集リンク: クリックで用語集タブへ切り替え + 該当用語へスクロール・ハイライト
+      document.querySelectorAll(".glossary-link").forEach(function (link) {
+        link.addEventListener("click", function (event) {
+          event.preventDefault();
+          var targetId = this.getAttribute("href").replace("#", "");
+          switchTab("Glossary");
+          var target = document.getElementById(targetId);
+          if (target) {
+            var item = target.closest(".glossary-item") || target;
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+            item.classList.add("glossary-highlight");
+            setTimeout(function () {
+              item.classList.remove("glossary-highlight");
+            }, 1600);
+          }
+        });
+      });
+
+      $("saveMemorySettings").addEventListener("click", saveMemorySettings);
+
+            $("saveSettings").addEventListener("click", saveSettingsFromDialog);
+      
+      $("testConnection").addEventListener("click", testConnection);
+      $("apiProvider").addEventListener("change", function () {
+        toggleProviderFields($("apiProvider").value);
+      });
+      
+      $("testConnection").addEventListener("click", testConnection);
+      $("devMode").addEventListener("change", function () {
+        state.ui.devMode = $("devMode").checked;
+        saveJson(UI_KEY, state.ui);
+        applyDevMode();
+      });
+
+      $("saveCharacter").addEventListener("click", saveCharacter);
+      $("resetEmotions").addEventListener("click", function () {
+        resetEmotionsToInitial();
+        renderEmotions();
+        switchTab("Chat");
+      });
+      $("resetConversation").addEventListener("click", resetConversation);
+
+      $("chatForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        sendChat();
+      });
+      $("chatStop").addEventListener("click", function () {
+        if (state.abortController) { state.abortController.abort(); }
+      });
+      $("chatInput").addEventListener("input", updateCounters);
+
+      $("exportData").addEventListener("click", exportData);
+
+      setupHelpButtons();
+      initSetupBalloon();
+      document.addEventListener("click", hideTooltip);
+    }
+
+    function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
+    function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+
+    // ====== ヘルプ ======
+    var HELP_TEXTS = {
+      "hbInitEmo": "会話開始時の感情値（0〜100）です。会話が進むと変化します。「感情リセット」または「初期値に戻す」で適用されます。",
+      "hbMemory": "古い会話を要約・圧縮してキャラクターの「記憶」として保持します。過去の出来事や約束事を覚えるための仕組みです。",
+      "hbInput": "今回送ったテキスト全体の文字数です（キャラクター設定・記憶・履歴を含みます）。",
+      "hbOutput": "キャラクターのセリフの文字数です（感情JSONの部分は含みません）。",
+      "hbTtft": "最初の1文字が返ってくるまでの時間（TTFT: Time to First Token）。サーバーの処理速度の目安になります。",
+      "hbTime": "回答全体の生成にかかった合計時間です。",
+      "hbSpeed": "1秒あたりの出力文字数です。モデルの生成速度の目安になります。",
+      "hbTokens": "サーバーが報告したトークン使用数です。利用制限の消費量の目安になります（prompt / completion / total）。",
+      "hbApiUrl": "おてもとLLM を使う場合は\nhttps://otemotollm.com を入力してください。",
+      "hbClientKey": "メールに記載された client_key をそのまま貼り付けます（pub_ から始まる文字列です）。",
+      "hbServerSecret": "メールに記載された server_secret を貼り付けます（sec_ から始まる文字列です）。絶対に他人に見せないでください。",
+      "hbModel": "使用するAIモデルを指定します。空欄にすると各サービスの既定値が使われます（OpenAI/gpt-4o-mini、Gemini/gemini-2.5-flash、おてもとLLM/LFM2.5_Q4KM,LFM2.5_Q8 など）。",
+      "hbTemperature": "回答のばらつき度合いです（0〜2）。0 に近いほど安定した回答、2 に近いほど多様な回答になります。よくわからない場合はそのままで問題ありません。",
+      "hbMaxTokens": "1回の回答の最大長（トークン数）を指定します。空欄にすると各サービスの既定値が使われます。",
+    };
+
+    function setupHelpButtons() {
+      Object.keys(HELP_TEXTS).forEach(function (id) {
+        var btn = $(id);
+        if (!btn) { return; }
+        btn.addEventListener("click", function (event) {
+          event.stopPropagation();
+          showTooltip(btn, HELP_TEXTS[id]);
+        });
+      });
+    }
+
+    function showTooltip(anchor, text) {
+      var bubble = $("tooltipBubble");
+      bubble.innerHTML = "";
+      text.split("\n").forEach(function (line, idx) {
+        if (idx > 0) { bubble.appendChild(document.createElement("br")); }
+        bubble.appendChild(document.createTextNode(line));
+      });
+      bubble.classList.remove("hidden");
+      bubble.style.top = "-9999px";
+      bubble.style.left = "0px";
+      var rect = anchor.getBoundingClientRect();
+      var bubbleW = bubble.offsetWidth;
+      var viewW = window.innerWidth;
+      var top = rect.bottom + 8;
+      var left = rect.left;
+      if (left + bubbleW + 8 > viewW) { left = viewW - bubbleW - 8; }
+      if (left < 8) { left = 8; }
+      bubble.style.top = top + "px";
+      bubble.style.left = left + "px";
+    }
+
+    function hideTooltip() { $("tooltipBubble").classList.add("hidden"); }
+
+    function initSetupBalloon() {
+      var hasSettings = Boolean(state.settings && (state.settings.apiUrl || state.settings.apiKey || state.settings.customApiUrl));
+      if (!hasSettings) {
+        $("setupBalloon").classList.remove("hidden");
+      }
+
+      $("setupBalloon").addEventListener("click", function (event) {
+        if (event.target.id === "closeBalloon") return;
+        switchTab("Settings");
+        $("setupBalloon").classList.add("hidden");
+      });
+
+      $("closeBalloon").addEventListener("click", function (event) {
+        event.stopPropagation();
+        $("setupBalloon").classList.add("hidden");
+      });
+    }
+
+    function loadJson(key, fallback) {
+      try {
+        var raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (error) { return fallback; }
+    }
+    function saveJson(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
+
+    function applyDevMode() {
+      $("devPanel").classList.toggle("hidden", !state.ui.devMode);
+      if (state.ui.devMode) { renderDebug(); }
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll(".tab-btn").forEach(function (btn) {
+        btn.classList.toggle("active", btn.id === "tabBtn" + tabId);
+      });
+      document.querySelectorAll(".tab-content").forEach(function (content) {
+        content.classList.toggle("hidden", content.id !== "tabContent" + tabId);
+      });
+      hideTooltip();
+      if (tabId === "Settings") { loadSettingsToForm(); }
+      if (tabId === "Memory") { loadMemoryToForm(); }
+      if (tabId === "Character") { applyCharacterToForm(); }
+    }
+
+    // ====== キャラクター設定 ======
+
+    function buildEmoInitSliders() {
+      var grid = $("emoInitGrid");
+      grid.innerHTML = "";
+      EMOTIONS.forEach(function (e) {
+        var row = document.createElement("div");
+        row.className = "emo-init-row";
+
+        var head = document.createElement("div");
+        head.className = "emo-init-head";
+        var label = document.createElement("span");
+        label.textContent = e.label;
+        var val = document.createElement("span");
+        val.id = "initVal_" + e.key;
+        head.appendChild(label);
+        head.appendChild(val);
+
+        var range = document.createElement("input");
+        range.type = "range";
+        range.min = "0";
+        range.max = "100";
+        range.id = "init_" + e.key;
+        range.addEventListener("input", function () {
+          $("initVal_" + e.key).textContent = range.value;
+        });
+
+        row.appendChild(head);
+        row.appendChild(range);
+        grid.appendChild(row);
+      });
+    }
+
+    function applyCharacterToForm() {
+      var c = state.character;
+      $("charName").value = c.name || "";
+      $("charFirstPerson").value = c.firstPerson || "";
+      $("charSpeech").value = c.speechStyle || "";
+      $("charPersona").value = c.persona || "";
+      EMOTIONS.forEach(function (e) {
+        var v = (c.initialEmotions && typeof c.initialEmotions[e.key] === "number") ? c.initialEmotions[e.key] : 0;
+        $("init_" + e.key).value = String(v);
+        $("initVal_" + e.key).textContent = String(v);
+      });
+      hideCharacterMsg();
+    }
+
+    function saveCharacter() {
+      var name = $("charName").value.trim();
+      if (!name) {
+        showCharacterMsg("名前を入力してください。");
+        return;
+      }
+      var initEmo = {};
+      EMOTIONS.forEach(function (e) {
+        initEmo[e.key] = clamp(Number($("init_" + e.key).value) || 0, 0, 100);
+      });
+      state.character = {
+        name: name,
+        firstPerson: $("charFirstPerson").value.trim(),
+        speechStyle: $("charSpeech").value.trim(),
+        persona: $("charPersona").value.trim(),
+        initialEmotions: initEmo
+      };
+      saveJson(CHAR_KEY, state.character);
+      renderCharaName();
+      switchTab("Chat");
+    }
+
+    function showCharacterMsg(msg) {
+      var n = $("characterMsg");
+      n.textContent = msg;
+      n.classList.remove("hidden");
+    }
+    function hideCharacterMsg() {
+      var n = $("characterMsg");
+      n.textContent = "";
+      n.classList.add("hidden");
+    }
+
+    function resetEmotionsToInitial() {
+      state.emotions = clone(state.character.initialEmotions);
+      state.lastDeltas = {};
+      saveJson(EMO_KEY, state.emotions);
+    }
+
+    function resetConversation() {
+      if (!confirm("会話履歴と記憶を消し、感情を初期値に戻します。よろしいですか？")) { return; }
+      state.chat = [];
+      saveJson(CHAT_KEY, state.chat);
+      state.memory = { summary: "", summarizedCount: 0 };
+      saveJson(MEM_KEY, state.memory);
+      resetEmotionsToInitial();
+      renderChat();
+      renderEmotions();
+      renderMemoryStatus();
+      hideCompactStatus();
+      resetMetrics();
+    }
+
+    // ====== 記憶（長期メモリ） ======
+
+    function saveMemory() { saveJson(MEM_KEY, state.memory); }
+
+    function loadMemoryToForm() {
+      $("recentTurns").value = String(state.memoryConfig.recentTurns || DEFAULT_MEMORY_CONFIG.recentTurns);
+      $("compactOverTurns").value = String(state.memoryConfig.compactOverTurns || DEFAULT_MEMORY_CONFIG.compactOverTurns);
+      hideMemoryDialogMsg();
+    }
+
+    function saveMemorySettings() {
+      var recent = Number($("recentTurns").value);
+      var over = Number($("compactOverTurns").value);
+      if (over < recent) {
+        showMemoryDialogMsg("「自動整理を始める量」は「直近保持」以上にしてください。（現在: 直近 " + recent + "往復 / 整理開始 " + over + "往復）");
+        return;
+      }
+      state.memoryConfig = { recentTurns: recent, compactOverTurns: over };
+      saveJson(MEMCFG_KEY, state.memoryConfig);
+      switchTab("Chat");
+      renderMemoryStatus();
+      compactMemoryIfNeeded();
+    }
+
+    function showMemoryDialogMsg(m) { var n = $("memoryDialogMsg"); n.textContent = m; n.classList.remove("hidden"); }
+    function hideMemoryDialogMsg() { var n = $("memoryDialogMsg"); n.textContent = ""; n.classList.add("hidden"); }
+
+    function showCompactStatus(message, type) {
+      var n = $("compactStatus");
+      n.textContent = message;
+      n.className = type || "notice";
+      n.classList.remove("hidden");
+    }
+    function hideCompactStatus() {
+      var n = $("compactStatus");
+      n.textContent = "";
+      n.classList.add("hidden");
+    }
+
+    function renderMemoryStatus() {
+      var pairs = countTurns(state.chat);
+      var hasSummary = Boolean(state.memory.summary);
+      $("memorySummaryLine").textContent = "直近保持: " + Math.min(pairs, Number(state.memoryConfig.recentTurns)) + "往復 / 長期記憶: " + (hasSummary ? "あり" : "なし");
+      $("memoryPreview").textContent = hasSummary ? state.memory.summary : "まだ記憶はまとめられていません。";
+      var badge = $("memoryBadge");
+      badge.textContent = hasSummary ? "あり" : "なし";
+      badge.className = "badge " + (hasSummary ? "ok" : "warn");
+    }
+
+    function takeLastMessages(messages, count) {
+      return messages.slice(Math.max(0, messages.length - count));
+    }
+
+    function countTurns(messages) {
+      var u = 0, a = 0;
+      messages.forEach(function (m) {
+        if (m.role === "user") { u += 1; }
+        else if (m.role === "assistant" && m.content) { a += 1; }
+      });
+      return Math.min(u, a);
+    }
+
+    // 古い会話を記憶メモへ圧縮します。チャット表示は消さず、送信文脈だけを軽くします。
+    function compactMemoryIfNeeded() {
+      var over = Number(state.memoryConfig.compactOverTurns || DEFAULT_MEMORY_CONFIG.compactOverTurns);
+      if (state.isCompacting || countTurns(state.chat) <= over) { return; }
+
+      var keep = Number(state.memoryConfig.recentTurns || DEFAULT_MEMORY_CONFIG.recentTurns) * 2;
+      var end = state.chat.length - keep; // ここまでを記憶へ取り込む（直近 keep 件は残す）
+      if (end <= state.memory.summarizedCount) { return; }
+
+      var toSummarize = state.chat.slice(state.memory.summarizedCount, end);
+      if (!toSummarize.length) { return; }
+
+      state.isCompacting = true;
+      showCompactStatus("古い会話を記憶へ整理しています…", "notice");
+
+      requestCompletion(buildMemorySummaryMessages(state.memory.summary, toSummarize), { stream: false })
+        .then(function (summaryText) {
+          state.memory.summary = cleanupSummary(summaryText);
+          state.memory.summarizedCount = end;
+          saveMemory();
+          renderMemoryStatus();
+          showCompactStatus("会話の記憶を整理しました。", "success");
+        })
+        .catch(function (error) {
+          if (error && error.aborted) { showCompactStatus("記憶の整理を中断しました。", "notice"); }
+          else { showCompactStatus("記憶の整理に失敗しました。" + error.message, "error"); }
+        })
+        .finally(function () { state.isCompacting = false; });
+    }
+
+    function buildMemorySummaryMessages(existingSummary, messagesToSummarize) {
+      var charName = state.character.name || "キャラクター";
+      var transcript = messagesToSummarize.map(function (m) {
+        var label = m.role === "user" ? "ユーザー" : charName;
+        return label + ": " + m.content;
+      }).join("\n\n");
+      return [
+        {
+          role: "system",
+          content: "次の会話ログを、キャラクターが今後の会話で思い出すための『記憶メモ』に圧縮してください。ユーザーの名前や呼び方、好き嫌い、約束したこと、重要な出来事、二人の関係性や距離感、話した主な話題を残し、あいさつや重複は捨ててください。感情の数値は書かないこと。300〜500文字程度の日本語で、簡潔な箇条書きにしてください。"
+        },
+        {
+          role: "user",
+          content: "既存の記憶メモ:\n" + (existingSummary || "なし") + "\n\n追加で取り込む会話:\n" + transcript
+        }
+      ];
+    }
+
+    function cleanupSummary(text) {
+      var cleaned = String(text || "").trim();
+      if (!cleaned) { return state.memory.summary || ""; }
+      return cleaned.slice(0, 1200);
+    }
+
+    // ====== 感情の表示 ======
+
+    function renderCharaName() {
+      $("charaName").textContent = state.character.name || "キャラクター";
+    }
+
+    function moodInfo() {
+      var top = null;
+      EMOTIONS.forEach(function (e) {
+        var v = state.emotions[e.key];
+        if (!top || v > top.value) { top = { label: e.label, value: v, color: e.color }; }
+      });
+      if (!top || top.value < 25) {
+        return { text: "おだやか", color: "var(--muted)" };
+      }
+      return { text: top.label + "（" + Math.round(top.value) + "）", color: top.color };
+    }
+
+    function renderEmotions() {
+      var list = $("emoList");
+      list.innerHTML = "";
+
+      EMOTIONS.forEach(function (e) {
+        var value = Math.round(state.emotions[e.key]);
+        var delta = state.lastDeltas[e.key] || 0;
+
+        var row = document.createElement("div");
+        row.className = "emo-row";
+
+        var head = document.createElement("div");
+        head.className = "emo-head";
+
+        var labelWrap = document.createElement("span");
+        var label = document.createElement("span");
+        label.className = "emo-label";
+        label.textContent = e.label;
+        labelWrap.appendChild(label);
+        if (delta !== 0) {
+          var d = document.createElement("span");
+          d.className = "emo-delta " + (delta > 0 ? "up" : "down");
+          d.textContent = (delta > 0 ? "▲+" : "▼") + delta;
+          labelWrap.appendChild(d);
+        }
+
+        var val = document.createElement("span");
+        val.className = "emo-value";
+        val.textContent = value;
+
+        head.appendChild(labelWrap);
+        head.appendChild(val);
+
+        var bar = document.createElement("div");
+        bar.className = "emo-bar";
+        var fill = document.createElement("div");
+        fill.className = "emo-fill";
+        fill.style.width = value + "%";
+        fill.style.background = e.color;
+        bar.appendChild(fill);
+
+        row.appendChild(head);
+        row.appendChild(bar);
+        list.appendChild(row);
+      });
+
+      var mood = moodInfo();
+      var badge = $("moodBadge");
+      badge.textContent = mood.text;
+      badge.style.background = "#fff";
+      badge.style.color = mood.color;
+      badge.style.border = "1px solid var(--line)";
+
+      $("moodLine").textContent = "今の気分: " + mood.text;
+    }
+
+    function applyEmotionDeltas(emo) {
+      var applied = false;
+      var deltas = {};
+      EMOTIONS.forEach(function (e) {
+        var d = Number(emo[e.key]);
+        if (!isNaN(d) && d !== 0) {
+          d = clamp(Math.round(d), -10, 10);
+          state.emotions[e.key] = clamp(state.emotions[e.key] + d, 0, 100);
+          deltas[e.key] = d;
+          applied = true;
+        }
+      });
+      state.lastDeltas = deltas;
+      if (applied) { saveJson(EMO_KEY, state.emotions); }
+      renderEmotions();
+    }
+
+    // ====== プロンプト組み立て ======
+
+    function buildCharacterSystemPrompt() {
+      var c = state.character;
+      var emoLine = EMOTIONS.map(function (e) {
+        return e.label + ":" + Math.round(state.emotions[e.key]);
+      }).join(", ");
+
+      var lines = [];
+      lines.push("あなたはキャラクター「" + (c.name || "キャラクター") + "」になりきって会話します。設定から外れた発言や、AIであることへの言及はしないでください。");
+      if (c.persona) { lines.push("【性格・設定】\n" + c.persona); }
+      if (c.speechStyle) { lines.push("【口調】" + c.speechStyle); }
+      if (c.firstPerson) { lines.push("【一人称】" + c.firstPerson); }
+      lines.push("【現在の感情（0〜100）】" + emoLine + "\nこの状態にふさわしい態度・口調で、キャラクターとして自然に返答してください。");
+      lines.push(
+        "【出力ルール（厳守）】\n" +
+        "1. まずキャラクターのセリフだけを書く。セリフの中に感情の数値・パラメータ・記号・ト書きを絶対に含めない。\n" +
+        "2. セリフを書き終えたら、最後の行に必ず次の形式で、今回のやり取りでの感情の増減量を出力する:\n" +
+        MARKER + '{"joy":0,"anger":0,"sadness":0,"fun":0,"surprise":0,"affection":0}\n' +
+        "3. 各値は -10〜+10 の整数。変化がなければ 0。今回のやり取りで感じた気持ちの動きを反映する。\n" +
+        "4. " + MARKER + " 以降はこのJSONだけにし、セリフや説明を一切書かない。この部分はユーザーには表示されない。"
+      );
+      return lines.join("\n\n");
+    }
+
+    function getRecentMessages() {
+      var msgs = state.chat.filter(function (m) { return m.content; });
+      var limit = Number(state.memoryConfig.recentTurns || DEFAULT_MEMORY_CONFIG.recentTurns) * 2;
+      return msgs.slice(Math.max(0, msgs.length - limit));
+    }
+
+    function buildMessages(currentUserText) {
+      var messages = [{ role: "system", content: buildCharacterSystemPrompt() }];
+      // 長期記憶（要約）があれば、直近履歴の前に渡します。
+      if (state.memory.summary) {
+        messages.push({
+          role: "system",
+          content: "【これまでの記憶（" + (state.character.name || "キャラクター") + "が覚えていること）】\n" + state.memory.summary
+        });
+      }
+      getRecentMessages().forEach(function (m) {
+        messages.push({ role: m.role, content: m.content });
+      });
+      messages.push({ role: "user", content: currentUserText });
+      return messages;
+    }
+
+    // ====== マーカー処理（セリフと感情JSONの分離） ======
+
+    /*
+      モデルが指示どおりの "[[EMO]]{...}" を出すとは限らないため、
+      表記ゆれに強い正規表現で「感情マーカーの始まり」を検出します。
+      例として次のような崩れた形もすべてマーカーとして扱います:
+        [[EMO]]{...}          （正規）
+        [[EMO]|joy:72,...]]   （閉じ括弧が1つ・パイプ区切り）
+        [EMO] joy:5, ...      （括弧が1つ）
+        [[ EMO ]]             （空白入り）
+      角括弧1個以上 + EMO + 角括弧0個以上、にマッチさせます。
+    */
+    var EMO_MARKER_RE = /\[+\s*EMO\s*\]*/i;
+    // ストリーミング途中で末尾がマーカーになりかけている場合（"[", "[[", "[[E", "[[EM"...）に隠すための判定。
+    var EMO_PARTIAL_RE = /\[+\s*(?:E(?:M(?:O)?)?)?\s*\]?$/i;
+
+    // ストリーミング中に吹き出しへ出してよい範囲（マーカー以前）を返す。
+    function visiblePart(raw) {
+      var m = raw.match(EMO_MARKER_RE);
+      if (m) { return raw.slice(0, m.index).replace(/\s+$/, ""); }
+      // まだ "EMO" まで届いていない末尾の欠片を隠す（チラ見え防止）。
+      var p = raw.match(EMO_PARTIAL_RE);
+      if (p && p[0].indexOf("[") >= 0) { return raw.slice(0, p.index).replace(/\s+$/, ""); }
+      return raw;
+    }
+
+    // 文字列から感情データを取り出す。JSON / "key:value" 区切りの両方に対応。
+    function parseEmo(after) {
+      if (!after) { return null; }
+      // 1) JSONオブジェクト形式 {"joy":5, ...}
+      var s = after.indexOf("{");
+      var e = after.lastIndexOf("}");
+      if (s >= 0 && e > s) {
+        try { return normalizeEmo(JSON.parse(after.slice(s, e + 1))); } catch (err) { /* 続けて下の形式を試す */ }
+      }
+      // 2) "joy:72, affection:40" や "喜び:5" のようなキー:値の羅列
+      var pairs = {};
+      var found = false;
+      var re = /([A-Za-z\u3040-\u30ff\u4e00-\u9fff]+)\s*[:：=]\s*([+-]?\d+)/g;
+      var mm;
+      while ((mm = re.exec(after)) !== null) {
+        pairs[mm[1]] = Number(mm[2]);
+        found = true;
+      }
+      return found ? normalizeEmo(pairs) : null;
+    }
+
+    // 英語キー(joy 等)・日本語ラベル(喜び 等)のどちらでも EMOTIONS のキーに正規化する。
+    function normalizeEmo(obj) {
+      if (!obj || typeof obj !== "object") { return null; }
+      var labelToKey = {};
+      EMOTIONS.forEach(function (em) { labelToKey[em.label] = em.key; });
+      var out = {};
+      Object.keys(obj).forEach(function (k) {
+        var key = null;
+        if (EMOTIONS.some(function (em) { return em.key === k; })) { key = k; }
+        else if (labelToKey[k]) { key = labelToKey[k]; }
+        if (key !== null) {
+          var v = Number(obj[k]);
+          if (!isNaN(v)) { out[key] = v; }
+        }
+      });
+      return Object.keys(out).length ? out : null;
+    }
+
+    // 完了後、生応答からセリフと感情データを取り出す。
+    function parseResponse(raw) {
+      var m = raw.match(EMO_MARKER_RE);
+      var reply, after;
+      if (m) {
+        reply = raw.slice(0, m.index);
+        after = raw.slice(m.index + m[0].length);
+      } else {
+        reply = raw;
+        after = "";
+      }
+      // 念のため、セリフ側に残ったマーカー様の文字列も機械的に除去する。
+      reply = reply.replace(EMO_MARKER_RE, "").trim();
+      return { reply: reply, emo: parseEmo(after) };
+    }
+
+    // ====== 設定フォーム ======
+
+    function loadSettingsToForm() {
+      var provider = state.settings.provider || "otemoto";
+      $("apiProvider").value = provider;
+      toggleProviderFields(provider);
+
+      $("apiUrl").value = state.settings.apiUrl || "";
+      $("clientKey").value = state.settings.clientKey || "";
+      $("serverSecret").value = state.settings.serverSecret || "";
+
+      $("apiKey").value = state.settings.apiKey || "";
+      $("customApiUrl").value = state.settings.customApiUrl || "";
+      $("customApiKey").value = state.settings.customApiKey || "";
+
+      $("genModel").value = state.gen.model || "";
+      $("genTemperature").value = state.gen.temperature || "";
+      $("genMaxTokens").value = state.gen.maxTokens || "";
+      $("genIncludeUsage").checked = Boolean(state.gen.includeUsage);
+
+      $("devMode").checked = Boolean(state.ui.devMode);
+
+      hideSettingsMsg();
+    }
+
+    function saveSettingsFromDialog() {
+      var nextSettings = {
+        provider: $("apiProvider").value,
+        apiUrl: $("apiUrl").value.trim(),
+        clientKey: $("clientKey").value.trim(),
+        serverSecret: $("serverSecret").value.trim(),
+        apiKey: $("apiKey").value.trim(),
+        customApiUrl: $("customApiUrl").value.trim(),
+        customApiKey: $("customApiKey").value.trim()
+      };
+      var validation = validateSettings(nextSettings);
+
+      if (!validation.ok) {
+        showSettingsMsg(validation.message);
+        return;
+      }
+
+      state.settings = nextSettings;
+      saveJson(SETTINGS_KEY, nextSettings);
+
+      state.gen = {
+        model: $("genModel").value.trim(),
+        temperature: $("genTemperature").value.trim(),
+        maxTokens: $("genMaxTokens").value.trim(),
+        includeUsage: $("genIncludeUsage").checked
+      };
+      saveJson(GEN_KEY, state.gen);
+
+      switchTab("Chat");
+      renderSettingsStatus();
+      showTestResult("設定を保存しました。接続テストで通信確認をしてください。", "success");
+    }
+
+    function clearSettings() {
+      if (confirm("保存されている接続設定を削除しますか？")) {
+        localStorage.removeItem(SETTINGS_KEY);
+        state.settings = {
+          provider: "otemoto",
+          apiUrl: DEFAULT_API_URL,
+          clientKey: "",
+          serverSecret: "",
+          apiKey: "",
+          customApiUrl: "",
+          customApiKey: ""
+        };
+        switchTab("Chat");
+        renderSettingsStatus();
+        showTestResult("このブラウザに保存されていた接続設定を削除しました。", "notice");
+      }
+    }
+
+    function showSettingsMsg(m) { var n = $("settingsMsg"); n.textContent = m; n.classList.remove("hidden"); }
+    function hideSettingsMsg() { var n = $("settingsMsg"); n.textContent = ""; n.classList.add("hidden"); }
+
+    function exportData() {
+      var data = {
+        exportedAt: new Date().toISOString(),
+        character: state.character,
+        emotions: state.emotions,
+        memory: state.memory,
+        memoryConfig: state.memoryConfig,
+        gen: state.gen,
+        chat: state.chat
+      };
+      var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "otemoto-character-export.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    function validateSettings(settings) {
+      if (!settings) { return { ok: false, message: "設定情報がありません。" }; }
+      var provider = settings.provider || "otemoto";
+
+      if (provider === "otemoto") {
+        if (!settings.apiUrl) { return { ok: false, message: "APIサーバーURLが未設定です。" }; }
+        if (!/^https?:\/\//i.test(settings.apiUrl)) { return { ok: false, message: "APIサーバーURLは http:// または https:// から入力してください。" }; }
+        if (!settings.clientKey) { return { ok: false, message: "Client Key が未設定です。" }; }
+        if (!settings.serverSecret) { return { ok: false, message: "Server Secret が未設定です。" }; }
+      } else if (provider === "openai" || provider === "gemini") {
+        if (!settings.apiKey) { return { ok: false, message: "API Key が未設定です。" }; }
+      } else if (provider === "custom") {
+        if (!settings.customApiUrl) { return { ok: false, message: "APIサーバーURLが未設定です。" }; }
+        if (!/^https?:\/\//i.test(settings.customApiUrl)) { return { ok: false, message: "APIサーバーURLは http:// または https:// から入力してください。" }; }
+      }
+      return { ok: true, message: "" };
+    }
+
+    function renderSettingsStatus() {
+      var validation = validateSettings(state.settings);
+      var status = $("settingsStatus");
+      var summary = $("settingsSummary");
+
+      status.className = "badge " + (validation.ok ? "ok" : "warn");
+      status.textContent = validation.ok ? "設定済み" : "未設定";
+
+      if (validation.ok) {
+        var provider = state.settings.provider || "otemoto";
+        var endpoint = "";
+        if (provider === "otemoto") {
+          endpoint = "おてもとLLM: " + normalizeEndpoint(state.settings.apiUrl);
+        } else if (provider === "openai") {
+          endpoint = "OpenAI API";
+        } else if (provider === "gemini") {
+          endpoint = "Gemini API";
+        } else if (provider === "custom") {
+          endpoint = "カスタム: " + normalizeEndpoint(state.settings.customApiUrl);
+        }
+        summary.className = "success";
+        summary.textContent = "接続先: " + endpoint;
+      } else {
+        summary.className = "notice";
+        summary.textContent = validation.message || "接続設定からAPIサーバーURLとキーを入力してください。";
+      }
+    }
+
+    function normalizeEndpoint(input) {
+      var url = String(input || "").trim().replace(/\/+$/, "");
+      if (/\/v1\/chat\/completions$/i.test(url)) { return url; }
+      return url + "/v1/chat/completions";
+    }
+
+    function createSignature(message, secret) {
+      var encoder = new TextEncoder();
+      return window.crypto.subtle
+        .importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+        .then(function (key) { return window.crypto.subtle.sign("HMAC", key, encoder.encode(message)); })
+        .then(function (buf) {
+          var bytes = new Uint8Array(buf);
+          var hex = "";
+          for (var i = 0; i < bytes.length; i += 1) { hex += bytes[i].toString(16).padStart(2, "0"); }
+          return hex;
+        });
+    }
+
+    function isFiniteNumberString(v) {
+      if (v === "" || v === null || typeof v === "undefined") { return false; }
+      return !isNaN(Number(v));
+    }
+
+    function requestCompletion(messages, options) {
+      options = options || {};
+
+      var validation = validateSettings(state.settings);
+      if (!validation.ok) {
+        return Promise.reject(new Error(validation.message));
+      }
+
+      var provider = state.settings.provider || "otemoto";
+      var payload = {
+        messages: messages,
+        stream: Boolean(options.stream)
+      };
+
+      var model = state.gen.model;
+      if (!model) {
+        if (provider === "openai") model = "gpt-4o-mini";
+        else if (provider === "gemini") model = "gemini-2.5-flash";
+        else if (provider === "otemoto") model = "LFM2.5_Q4KM";
+      }
+
+      if (model) {
+        payload.model = model;
+      }
+
+      if (options.useGenParams) {
+        if (isFiniteNumberString(state.gen.temperature)) {
+          payload.temperature = Number(state.gen.temperature);
+        }
+        if (isFiniteNumberString(state.gen.maxTokens)) {
+          payload.max_tokens = Number(state.gen.maxTokens);
+        }
+        if (payload.stream && state.gen.includeUsage) {
+          payload.stream_options = { include_usage: true };
+        }
+      }
+
+      var body = JSON.stringify(payload);
+      var endpoint = "";
+      var headers = { "Content-Type": "application/json" };
+      var fetchPromise;
+
+      resetDebug();
+
+      if (provider === "otemoto") {
+        var timestamp = Math.floor(Date.now() / 1000).toString();
+        endpoint = normalizeEndpoint(state.settings.apiUrl || DEFAULT_API_URL);
+        fetchPromise = createSignature(timestamp + body, state.settings.serverSecret).then(function (signature) {
+          headers["Authorization"] = "Bearer " + state.settings.clientKey;
+          headers["X-Timestamp"] = timestamp;
+          headers["X-Signature"] = signature;
+
+          setDebugRequest(endpoint, headers, body);
+          return fetch(endpoint, {
+            method: "POST",
+            headers: headers,
+            body: body,
+            signal: options.signal || null
+          });
+        });
+      } else {
+        if (provider === "openai") {
+          endpoint = "https://api.openai.com/v1/chat/completions";
+          headers["Authorization"] = "Bearer " + state.settings.apiKey;
+        } else if (provider === "gemini") {
+          endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+          headers["Authorization"] = "Bearer " + state.settings.apiKey;
+        } else if (provider === "custom") {
+          endpoint = normalizeEndpoint(state.settings.customApiUrl);
+          if (state.settings.customApiKey) {
+            headers["Authorization"] = "Bearer " + state.settings.customApiKey;
+          }
+        }
+
+        setDebugRequest(endpoint, headers, body);
+        fetchPromise = Promise.resolve().then(function () {
+          return fetch(endpoint, {
+            method: "POST",
+            headers: headers,
+            body: body,
+            signal: options.signal || null
+          });
+        });
+      }
+
+      return fetchPromise.then(function (response) {
+        setDebugResponseMeta(response);
+        if (!response.ok) {
+          return response.text().then(function (text) {
+            setDebugResponseBody(text);
+            throw new Error(formatHttpError(response.status, text));
+          });
+        }
+        return options.stream ? readStream(response, options.onDelta) : readNonStream(response);
+      }).catch(function (error) {
+        if (error && error.name === "AbortError") {
+          var aborted = new Error("__aborted__");
+          aborted.aborted = true;
+          throw aborted;
+        }
+        if (error && error.aborted) {
+          throw error;
+        }
+        throw new Error(formatNetworkError(error));
+      }).finally(function () {
+        if (state.ui.devMode) {
+          renderDebug();
+        }
+      });
+    }
+
+    function readStream(response, onDelta) {
+      if (!response.body || !response.body.getReader) {
+        return Promise.reject(new Error("このブラウザはストリーミング応答の読み取りに対応していません。"));
+      }
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder("utf-8");
+      var buffer = "";
+      var raw = "";
+      function pump() {
+        return reader.read().then(function (result) {
+          if (result.done) { setDebugResponseBody(raw); return ""; }
+          var chunk = decoder.decode(result.value, { stream: true });
+          raw += chunk;
+          buffer += chunk;
+          var lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+          lines.forEach(function (line) {
+            var trimmed = line.trim();
+            if (trimmed.indexOf("data: ") !== 0) { return; }
+            var data = trimmed.slice(6).trim();
+            if (!data || data === "[DONE]") { return; }
+            try {
+              var parsed = JSON.parse(data);
+              if (parsed.usage) { state.debug.usage = parsed.usage; }
+              var delta = "";
+              if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                delta = parsed.choices[0].delta.content || "";
+              }
+              if (delta && onDelta) { onDelta(delta); }
+            } catch (error) { /* 非JSON行は無視 */ }
+          });
+          return pump();
+        });
+      }
+      return pump();
+    }
+
+    function readNonStream(response) {
+      return response.text().then(function (text) {
+        setDebugResponseBody(text);
+        if (!text) { return ""; }
+        try {
+          var parsed = JSON.parse(text);
+          if (parsed.usage) { state.debug.usage = parsed.usage; }
+          if (parsed.choices && parsed.choices[0] && parsed.choices[0].message) {
+            return parsed.choices[0].message.content || "";
+          }
+          return text;
+        } catch (error) { return text; }
+      });
+    }
+
+    function resetDebug() { state.debug = { request: null, response: null, usage: null }; }
+    function setDebugRequest(url, headers, body) { state.debug.request = { url: url, headers: headers, body: body }; }
+    function setDebugResponseMeta(response) {
+      state.debug.response = { status: response.status, statusText: response.statusText, headers: headersToObject(response.headers), body: "" };
+    }
+    function setDebugResponseBody(text) {
+      if (!state.debug.response) { state.debug.response = { status: 0, statusText: "", headers: {}, body: "" }; }
+      state.debug.response.body = String(text || "").slice(0, 8000);
+    }
+    function headersToObject(headers) {
+      var obj = {};
+      if (headers && headers.forEach) { headers.forEach(function (v, k) { obj[k] = v; }); }
+      return obj;
+    }
+    function prettyJson(text) { try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return text; } }
+    function renderDebug() {
+      var req = state.debug.request;
+      var res = state.debug.response;
+      $("debugRequest").textContent = req
+        ? "POST " + req.url + "\n\n" + prettyJson(req.body)
+        : "まだリクエストはありません。";
+      $("debugResponse").textContent = res
+        ? (String(res.status) + " " + (res.statusText || "")).trim() + "\n\n" + (res.body || "(本文なし)")
+        : "まだ応答はありません。";
+    }
+
+    function updateTokenMetric() {
+      var usage = state.debug.usage;
+      if (usage && typeof usage.total_tokens !== "undefined") {
+        var label = usage.total_tokens + " tok";
+        if (typeof usage.prompt_tokens !== "undefined" && typeof usage.completion_tokens !== "undefined") {
+          label = usage.total_tokens + " tok (in " + usage.prompt_tokens + " / out " + usage.completion_tokens + ")";
+        }
+        $("metricTokens").textContent = label;
+      }
+    }
+
+    function formatHttpError(status, bodyText) {
+      var detail = bodyText ? " 応答: " + bodyText.slice(0, 180) : "";
+      if (status === 400) { return "400 Bad Request: 送信形式または入力内容を確認してください。" + detail; }
+      if (status === 401 || status === 403) { return status + ": Client Key、Server Secret、署名仕様を確認してください。" + detail; }
+      if (status === 404) { return "404 Not Found: APIサーバーURLの末尾が /v1/chat/completions か確認してください。" + detail; }
+      if (status >= 500) { return status + ": APIサーバー側でエラーが発生しています。" + detail; }
+      return status + ": API通信に失敗しました。" + detail;
+    }
+    function formatNetworkError(error) {
+      var message = error && error.message ? error.message : "不明な通信エラーです。";
+      var isFetchFail = message.indexOf("Failed to fetch") >= 0 || message.indexOf("NetworkError") >= 0 || message.indexOf("Load failed") >= 0;
+      if (!isFetchFail) {
+        return message;
+      }
+
+      var provider = state.settings.provider || "otemoto";
+      if (provider === "openai" || provider === "gemini") {
+        var name = provider === "openai" ? "OpenAI" : "Gemini";
+        return name + " への通信がブラウザにブロックされました。" +
+          name + " の公式APIはブラウザから直接呼び出すとCORSで弾かれることが多く、その場合この画面だけでは接続できません。" +
+          "中継サーバー（プロキシ）を立てて、その中継先URLを「カスタム」に入力するか、CORSを許可したエンドポイントをご利用ください。" +
+          "（APIキーの有効状態・ネットワークも併せてご確認ください）";
+      }
+      if (provider === "custom") {
+        return "カスタムエンドポイントへ通信できませんでした。URL・ポート開放・ネットワークに加え、サーバー側でCORS（このページのオリジンからのアクセス）が許可されているかをご確認ください。";
+      }
+      return "通信できませんでした。URL、ネットワーク、サーバーの起動状態、CORS許可をご確認ください。";
+    }
+
+    function testConnection() {
+      showTestResult("接続テスト中です。数秒お待ちください。", "notice");
+      setBusy(true);
+      requestCompletion([
+        { role: "system", content: "短く返答してください。" },
+        { role: "user", content: "接続テストです。OKとだけ返してください。" }
+      ], { stream: false }).then(function () {
+        showTestResult("接続テストに成功しました。チャットを実行できます。", "success");
+      }).catch(function (error) {
+        showTestResult(error && error.aborted ? "接続テストを中断しました。" : error.message, error && error.aborted ? "notice" : "error");
+      }).finally(function () { setBusy(false); });
+    }
+
+    // ====== チャット送信 ======
+
+    function sendChat() {
+      var input = $("chatInput");
+      var text = input.value.trim();
+      if (!text || state.isBusy) { return; }
+
+      clearError("chatError");
+      input.value = "";
+      updateCounters();
+
+      var requestMessages = buildMessages(text);
+      appendMessage({ role: "user", content: text });
+      appendMessage({ role: "assistant", content: "" });
+      renderChat();
+
+      var bubble = getLastAssistantBubble();
+      var assistantIndex = state.chat.length - 1;
+
+      var startedAt = performance.now();
+      var firstTokenAt = 0;
+      var raw = "";
+
+      var controller = new AbortController();
+      state.abortController = controller;
+
+      resetStreamMetrics();
+      setBusy(true);
+
+      requestCompletion(requestMessages, {
+        stream: true,
+        useGenParams: true,
+        signal: controller.signal,
+        onDelta: function (delta) {
+          if (!firstTokenAt) {
+            firstTokenAt = performance.now();
+            $("metricTtft").textContent = ((firstTokenAt - startedAt) / 1000).toFixed(2) + " 秒";
+          }
+          raw += delta;
+          var visible = visiblePart(raw);
+          if (bubble) {
+            bubble.textContent = visible || "…";
+            scrollChatToBottom();
+          }
+          updateMetrics(text.length, visible.length, performance.now() - startedAt);
+        }
+      }).then(function () {
+        finishTurn(assistantIndex, raw, false);
+        compactMemoryIfNeeded();
+      }).catch(function (error) {
+        if (error && error.aborted) {
+          finishTurn(assistantIndex, raw, true);
+        } else {
+          var parsedErr = parseResponse(raw);
+          var fallback = parsedErr.reply || "（応答を取得できませんでした）";
+          state.chat[assistantIndex].content = fallback;
+          saveJson(CHAT_KEY, state.chat);
+          renderChat();
+          showError("chatError", error.message);
+        }
+        updateTokenMetric();
+      }).finally(function () {
+        state.abortController = null;
+        setBusy(false);
+      });
+    }
+
+    // 1ターン完了時: セリフを確定し、感情JSONを解析して反映する。
+    function finishTurn(assistantIndex, raw, aborted) {
+      var parsed = parseResponse(raw);
+      var reply = parsed.reply || (aborted ? "（…）" : "（沈黙）");
+      if (aborted && parsed.reply) { reply = parsed.reply + "\n\n（停止しました）"; }
+
+      state.chat[assistantIndex].content = reply;
+      saveJson(CHAT_KEY, state.chat);
+      renderChat();
+
+      if (parsed.emo) {
+        applyEmotionDeltas(parsed.emo);
+      }
+      updateTokenMetric();
+    }
+
+    function appendMessage(message) {
+      state.chat.push({ role: message.role, content: message.content });
+      saveJson(CHAT_KEY, state.chat);
+    }
+
+    function renderChat() {
+      var log = $("chatLog");
+      log.innerHTML = "";
+      if (!state.chat.length) {
+        var hint = document.createElement("div");
+        hint.className = "message system";
+        hint.textContent = "「" + (state.character.name || "キャラクター") + "」との会話を始めましょう。右側に感情パラメータが表示されます。";
+        log.appendChild(hint);
+      }
+      state.chat.forEach(function (m) {
+        var bubble = document.createElement("div");
+        bubble.className = "message " + m.role;
+        bubble.textContent = m.content || "…";
+        log.appendChild(bubble);
+      });
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function getLastAssistantBubble() {
+      var nodes = $("chatLog").querySelectorAll(".message.assistant");
+      return nodes.length ? nodes[nodes.length - 1] : null;
+    }
+    function scrollChatToBottom() { var log = $("chatLog"); log.scrollTop = log.scrollHeight; }
+
+    function updateCounters() { $("chatCount").textContent = $("chatInput").value.length + " 文字"; }
+
+    function updateMetrics(inputChars, outputChars, elapsedMs) {
+      var seconds = Math.max(elapsedMs / 1000, 0);
+      var speed = seconds > 0 ? outputChars / seconds : 0;
+      $("metricInput").textContent = inputChars + " 文字";
+      $("metricOutput").textContent = outputChars + " 文字";
+      $("metricTime").textContent = seconds.toFixed(2) + " 秒";
+      $("metricSpeed").textContent = speed.toFixed(1) + " 文字/秒";
+    }
+    function resetMetrics() {
+      updateMetrics(0, 0, 0);
+      $("metricTtft").textContent = "— 秒";
+      $("metricTokens").textContent = "—";
+    }
+    function resetStreamMetrics() {
+      $("metricTtft").textContent = "計測中…";
+      $("metricTokens").textContent = "—";
+    }
+
+    function setBusy(isBusy) {
+      state.isBusy = isBusy;
+      $("chatSend").disabled = isBusy;
+      $("testConnection").disabled = isBusy;
+      $("chatSend").classList.toggle("hidden", isBusy);
+      $("chatStop").classList.toggle("hidden", !isBusy);
+    }
+
+    function showError(id, message) { var n = $(id); n.textContent = message; n.classList.remove("hidden"); }
+    function clearError(id) { var n = $(id); n.textContent = ""; n.classList.add("hidden"); }
+    function showTestResult(message, type) {
+      var n = $("testResult");
+      n.textContent = message;
+      n.className = type || "notice";
+      n.classList.remove("hidden");
+    }
+
+    init();
+  </script>
+</body>
+</html>
